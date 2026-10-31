@@ -1,0 +1,22 @@
+# Environment secrets
+.env
+.env.*
+!.env.example
+
+# Dependencies
+node_modules/
+
+# Telegram sessions
+*.session
+*.session*
+python/telethon_session*
+python/telegram_codex_session*
+python/voice_transcriber_session*
+
+# Logs
+*.log
+.bot.*
+
+# Python cache
+__pycache__/
+*.py[cod]
