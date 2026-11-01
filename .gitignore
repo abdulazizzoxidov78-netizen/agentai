@@ -20,3 +20,6 @@ python/voice_transcriber_session*
 # Python cache
 __pycache__/
 *.py[cod]
+
+# Codex local authentication
+.codex/

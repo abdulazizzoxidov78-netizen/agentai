@@ -5,7 +5,9 @@ import tempfile
 from pathlib import Path
 
 from dotenv import load_dotenv
-from groq import Groq
+import librosa
+import torch
+from transformers import WhisperForConditionalGeneration, WhisperProcessor
 from telethon import TelegramClient, events
 from telethon.utils import get_display_name
 
@@ -15,11 +17,8 @@ load_dotenv(ROOT / ".env")
 
 api_id = os.getenv("TELEGRAM_API_ID")
 api_hash = os.getenv("TELEGRAM_API_HASH")
-groq_key = os.getenv("GROQ_API_KEY")
 if not api_id or not api_hash:
     raise SystemExit(".env faylida TELEGRAM_API_ID va TELEGRAM_API_HASH bo'lishi kerak.")
-if not groq_key:
-    raise SystemExit(".env faylida GROQ_API_KEY bo'lishi kerak.")
 
 output_mode = os.getenv("VOICE_OUTPUT", "chat").strip().lower()
 if output_mode not in {"chat", "me"}:
@@ -33,16 +32,23 @@ except ValueError:
 
 # A separate session avoids colliding with the project's existing Telethon session.
 client = TelegramClient(str(ROOT / "python" / "voice_transcriber_session"), int(api_id), api_hash)
-groq_client = Groq(api_key=groq_key)
+model_id = os.getenv("UZBEK_STT_MODEL", "Kotib/uzbek_stt_v1")
+processor = None
+asr_model = None
 
 
 def transcribe(path: str) -> str:
-    with open(path, "rb") as audio:
-        result = groq_client.audio.transcriptions.create(
-            file=(Path(path).name, audio.read()),
-            model=os.getenv("GROQ_WHISPER_MODEL", "whisper-large-v3"),
-        )
-    return (result.text or "").strip()
+    global processor, asr_model
+    if processor is None or asr_model is None:
+        print(f"O'zbekcha model yuklanmoqda: {model_id} (birinchi marta ~3 GB)...")
+        processor = WhisperProcessor.from_pretrained(model_id)
+        asr_model = WhisperForConditionalGeneration.from_pretrained(model_id).eval()
+
+    audio, sample_rate = librosa.load(path, sr=16000, mono=True)
+    features = processor(audio, sampling_rate=sample_rate, return_tensors="pt").input_features
+    with torch.inference_mode():
+        token_ids = asr_model.generate(features, language="uz", task="transcribe")
+    return processor.batch_decode(token_ids, skip_special_tokens=True)[0].strip()
 
 
 @client.on(events.NewMessage(incoming=True))

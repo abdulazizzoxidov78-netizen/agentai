@@ -1,7 +1,8 @@
+
 {
   "name": "telegram-mcode-agent",
   "version": "1.0.0",
-  "description": "Telegram bot for remote mcode CLI control",
+  "description": "Telegram and Codex cloud agent",
   "main": "index.js",
   "scripts": {
     "start": "node index.js",
