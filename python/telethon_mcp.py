@@ -11,6 +11,7 @@ if hasattr(sys.stdout, 'reconfigure'):
     sys.stdout.reconfigure(encoding='utf-8')
 
 from telethon import TelegramClient, events
+from telethon.sessions import StringSession
 from telethon.utils import get_display_name
 env_path = os.path.join(os.path.dirname(__file__), '..', '.env')
 if os.path.isfile(env_path):
@@ -24,8 +25,9 @@ if os.path.isfile(env_path):
 API_ID = os.getenv('TELEGRAM_API_ID')
 API_HASH = os.getenv('TELEGRAM_API_HASH')
 SESSION_NAME = os.path.join(os.path.dirname(__file__), 'telethon_session')
-
-client = TelegramClient(SESSION_NAME, int(API_ID) if API_ID else 0, API_HASH or '')
+SESSION_STRING = os.getenv('TELETHON_SESSION_STRING', '').strip()
+session = StringSession(SESSION_STRING) if SESSION_STRING else SESSION_NAME
+client = TelegramClient(session, int(API_ID) if API_ID else 0, API_HASH or '')
 AUTO_REPLY_ENABLED = os.getenv('TELEGRAM_AUTO_REPLY', 'true').strip().lower() != 'false'
 
 
