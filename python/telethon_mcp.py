@@ -2,7 +2,16 @@ import sys
 import json
 import asyncio
 import os
-from telethon import TelegramClient
+import re
+import unicodedata
+
+if hasattr(sys.stdin, 'reconfigure'):
+    sys.stdin.reconfigure(encoding='utf-8')
+if hasattr(sys.stdout, 'reconfigure'):
+    sys.stdout.reconfigure(encoding='utf-8')
+
+from telethon import TelegramClient, events
+from telethon.utils import get_display_name
 env_path = os.path.join(os.path.dirname(__file__), '..', '.env')
 if os.path.isfile(env_path):
     with open(env_path, encoding='utf-8') as env_file:
@@ -17,6 +26,57 @@ API_HASH = os.getenv('TELEGRAM_API_HASH')
 SESSION_NAME = os.path.join(os.path.dirname(__file__), 'telethon_session')
 
 client = TelegramClient(SESSION_NAME, int(API_ID) if API_ID else 0, API_HASH or '')
+AUTO_REPLY_ENABLED = os.getenv('TELEGRAM_AUTO_REPLY', 'true').strip().lower() != 'false'
+
+
+@client.on(events.NewMessage(incoming=True))
+async def forward_private_message(event):
+    if not AUTO_REPLY_ENABLED or not event.is_private:
+        return
+    message = event.message
+    text = (message.raw_text or '').strip()
+    if not text:
+        return
+    sender = await event.get_sender()
+    if getattr(sender, 'bot', False):
+        return
+    print(json.dumps({
+        'event': 'incoming_private_message',
+        'chat_id': event.chat_id,
+        'message_id': message.id,
+        'sender_id': getattr(sender, 'id', None),
+        'sender_name': get_display_name(sender),
+        'text': text,
+    }, ensure_ascii=False), flush=True)
+
+
+def normalize_search_words(value):
+    value = unicodedata.normalize('NFKC', str(value)).casefold().replace('ё', 'е')
+    words = re.findall(r'[\w]+', value, flags=re.UNICODE)
+    stop_words = {'menga', 'manga', 'degan', 'digan', 'chat', 'chatni', 'chatini',
+                  'chatlar', 'chatlari', 'orasidan', 'topib', 'top', 'qidirib',
+                  'qidir', 'unga', 'un', 'ga', 'iltimos'}
+    normalized = []
+    for word in words:
+        if word in stop_words:
+            continue
+        # Uzbek possessive endings commonly appear in casual chat requests.
+        if len(word) > 3 and word.endswith('m'):
+            word = word[:-1]
+        elif len(word) > 4 and word.endswith('si'):
+            word = word[:-2]
+        if word:
+            normalized.append(word)
+    return normalized
+
+
+def chat_matches_query(name, username, query_words):
+    candidate_words = normalize_search_words(f'{name} {username or ""}')
+    return bool(query_words) and all(
+        any(candidate.startswith(word) or word.startswith(candidate)
+            for candidate in candidate_words)
+        for word in query_words
+    )
 
 
 async def resolve_entity(chat_id):
@@ -35,12 +95,12 @@ async def handle_request(request):
     
     if method == 'search_chats':
         query = params.get('query', '')
-        normalized_query = query.lstrip('@').casefold()
+        query_words = normalize_search_words(query.lstrip('@'))
         dialogs = await client.get_dialogs()
         results = []
         for d in dialogs:
             username = getattr(d.entity, 'username', None) or ''
-            if normalized_query in d.name.casefold() or normalized_query in username.casefold():
+            if chat_matches_query(d.name, username, query_words):
                 results.append({'id': d.id, 'name': d.name})
         return results
 
@@ -60,7 +120,10 @@ async def handle_request(request):
         if not params.get('confirm', False):
             label = getattr(entity, 'title', None) or getattr(entity, 'first_name', None) or str(chat_id)
             return {'status': 'preview', 'recipient': label, 'text': text}
-        await client.send_message(entity, text)
+        send_options = {}
+        if params.get('reply_to') is not None:
+            send_options['reply_to'] = int(params['reply_to'])
+        await client.send_message(entity, text, **send_options)
         return {'status': 'sent'}
 
     elif method == 'status':

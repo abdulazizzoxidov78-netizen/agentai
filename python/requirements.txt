@@ -4,3 +4,4 @@ mcp<2
 torch
 transformers
 librosa
+imageio-ffmpeg

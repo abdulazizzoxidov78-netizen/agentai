@@ -1,6 +1,7 @@
 const { spawn } = require('child_process');
 const path = require('path');
 const EventEmitter = require('events');
+const { StringDecoder } = require('string_decoder');
 
 class McpBridge extends EventEmitter {
     constructor() {
@@ -8,6 +9,8 @@ class McpBridge extends EventEmitter {
         this.pythonProcess = null;
         this.requestId = 0;
         this.pendingRequests = new Map();
+        this.stdoutBuffer = '';
+        this.stdoutDecoder = new StringDecoder('utf8');
     }
 
     start() {
@@ -16,11 +19,14 @@ class McpBridge extends EventEmitter {
         const scriptPath = path.join(__dirname, '..', 'python', 'telethon_mcp.py');
         
         this.pythonProcess = spawn(pythonPath, [scriptPath], {
-            stdio: ['pipe', 'pipe', 'inherit']
+            stdio: ['pipe', 'pipe', 'inherit'],
+            env: { ...process.env, PYTHONIOENCODING: 'utf-8', PYTHONUTF8: '1' }
         });
 
         this.pythonProcess.stdout.on('data', (data) => {
-            const lines = data.toString().split('\n');
+            this.stdoutBuffer += this.stdoutDecoder.write(data);
+            const lines = this.stdoutBuffer.split('\n');
+            this.stdoutBuffer = lines.pop();
             for (const line of lines) {
                 if (!line.trim()) continue;
                 try {
@@ -30,6 +36,8 @@ class McpBridge extends EventEmitter {
                         if (response.error) reject(new Error(response.error));
                         else resolve(response.result);
                         this.pendingRequests.delete(response.id);
+                    } else if (response.event === 'incoming_private_message') {
+                        this.emit('incoming_private_message', response);
                     } else if (response.event === 'error' || response.error) {
                         console.error('MCP Error:', response.error);
                     }
@@ -42,6 +50,8 @@ class McpBridge extends EventEmitter {
         this.pythonProcess.on('close', (code) => {
             console.log(`MCP process closed with code ${code}`);
             this.pythonProcess = null;
+            this.stdoutBuffer = '';
+            this.stdoutDecoder = new StringDecoder('utf8');
             for (const { reject } of this.pendingRequests.values()) {
                 reject(new Error(`Telethon jarayoni yopildi (kod: ${code})`));
             }

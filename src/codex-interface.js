@@ -41,4 +41,57 @@ async function runCodexCommand(message) {
     }
 }
 
-module.exports = { runCodexCommand };
+async function runCodexReply(message, timeoutMs = 120000) {
+    const isolatedDir = await fs.mkdtemp(path.join(os.tmpdir(), 'codex-telegram-reply-'));
+    const outputPath = path.join(isolatedDir, 'reply.txt');
+    const inheritedKeys = [
+        'PATH', 'APPDATA', 'LOCALAPPDATA', 'USERPROFILE', 'HOMEDRIVE',
+        'HOMEPATH', 'SYSTEMROOT', 'WINDIR', 'TEMP', 'TMP', 'CODEX_HOME'
+    ];
+    const env = Object.fromEntries(inheritedKeys
+        .filter((key) => process.env[key])
+        .map((key) => [key, process.env[key]]));
+
+    try {
+        return await new Promise((resolve, reject) => {
+            const child = spawn(process.execPath, [
+                CODEX_ENTRY, 'exec', '--json', '--ephemeral', '--ignore-user-config',
+                '--sandbox', 'read-only', '--skip-git-repo-check',
+                '--cd', isolatedDir, '--output-last-message', outputPath, '-'
+            ], { cwd: isolatedDir, env, stdio: ['pipe', 'ignore', 'pipe'], windowsHide: true });
+            let errorOutput = '';
+            let timedOut = false;
+            const timer = setTimeout(() => {
+                timedOut = true;
+                child.kill();
+            }, timeoutMs);
+            child.stderr.setEncoding('utf8');
+            child.stderr.on('data', (chunk) => { errorOutput += chunk; });
+            child.on('error', (error) => {
+                clearTimeout(timer);
+                reject(error);
+            });
+            child.on('close', async (code) => {
+                clearTimeout(timer);
+                if (timedOut) {
+                    reject(new Error('Codex javob berish vaqti tugadi.'));
+                    return;
+                }
+                if (code !== 0) {
+                    reject(new Error(`Codex tugadi (kod ${code}): ${errorOutput.slice(-2000)}`));
+                    return;
+                }
+                try {
+                    resolve((await fs.readFile(outputPath, 'utf8')).trim());
+                } catch (error) {
+                    reject(new Error(`Codex javobini o'qib bo'lmadi: ${error.message}`));
+                }
+            });
+            child.stdin.end(message);
+        });
+    } finally {
+        await fs.rm(isolatedDir, { recursive: true, force: true });
+    }
+}
+
+module.exports = { runCodexCommand, runCodexReply };
